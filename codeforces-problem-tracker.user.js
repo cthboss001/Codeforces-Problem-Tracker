@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Codeforces Problem Tracker
+// @name         Codeforces Problem Tracker with Time Tracking
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  Track Codeforces problems with timestamps and access count
+// @version      2.0
+// @description  Track Codeforces problems with timestamps, access count, and time spent
 // @author       cthboss01
 // @match        https://codeforces.com/*
 // @match        http://codeforces.com/*
@@ -60,6 +60,37 @@
             font-size: 12px;
             font-weight: bold;
             border: 2px solid #1a1a1a;
+        }
+
+        .cf-live-timer {
+            position: fixed;
+            bottom: 100px;
+            right: 30px;
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 30px;
+            font-size: 16px;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(46, 204, 113, 0.4);
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            gap: 8px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .cf-live-timer.active {
+            display: flex;
+        }
+
+        .cf-live-timer-icon {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
 
         .cf-tracker-modal {
@@ -160,6 +191,11 @@
             transform: translateX(5px);
         }
 
+        .cf-tracker-problem.active-problem {
+            border: 2px solid #2ecc71;
+            background: rgba(46, 204, 113, 0.1);
+        }
+
         .cf-problem-title {
             font-size: 18px;
             font-weight: bold;
@@ -210,6 +246,11 @@
             font-weight: 500;
         }
 
+        .cf-stat-value.time-highlight {
+            color: #2ecc71;
+            font-weight: bold;
+        }
+
         .cf-access-count {
             background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
             color: white;
@@ -217,6 +258,18 @@
             border-radius: 20px;
             font-size: 13px;
             font-weight: bold;
+        }
+
+        .cf-active-indicator {
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 5px;
         }
 
         .cf-tracker-footer {
@@ -271,7 +324,14 @@
 
     // Initialize storage
     const STORAGE_KEY = 'cf_problem_tracker_data';
-    const MAX_PROBLEMS = 20;
+    const MAX_PROBLEMS = 100;
+
+    // Time tracking variables
+    let activeTimer = null;
+    let currentProblemUrl = null;
+    let sessionStartTime = null;
+    let liveTimerDisplay = null;
+    let liveTimerInterval = null;
 
     // Get stored data
     function getData() {
@@ -302,13 +362,120 @@
             url: url,
             firstOpen: Date.now(),
             lastAccessed: Date.now(),
-            accessCount: 1
+            accessCount: 1,
+            timeSpent: 0 // in seconds
         };
+    }
+
+    // Start time tracking for current problem
+    function startTimeTracking() {
+        if (!isProblemPage()) return;
+
+        currentProblemUrl = window.location.href;
+        sessionStartTime = Date.now();
+
+        // Show live timer
+        if (liveTimerDisplay) {
+            liveTimerDisplay.classList.add('active');
+        }
+
+        // Update time every second
+        if (activeTimer) clearInterval(activeTimer);
+
+        activeTimer = setInterval(() => {
+            updateTimeSpent();
+        }, 1000);
+
+        // Update live display every second
+        if (liveTimerInterval) clearInterval(liveTimerInterval);
+
+        liveTimerInterval = setInterval(() => {
+            updateLiveTimer();
+        }, 1000);
+    }
+
+    // Stop time tracking
+    function stopTimeTracking() {
+        if (activeTimer) {
+            clearInterval(activeTimer);
+            activeTimer = null;
+        }
+
+        if (liveTimerInterval) {
+            clearInterval(liveTimerInterval);
+            liveTimerInterval = null;
+        }
+
+        if (currentProblemUrl && sessionStartTime) {
+            updateTimeSpent();
+            currentProblemUrl = null;
+            sessionStartTime = null;
+        }
+
+        // Hide live timer
+        if (liveTimerDisplay) {
+            liveTimerDisplay.classList.remove('active');
+        }
+    }
+
+    // Update time spent on current problem
+    function updateTimeSpent() {
+        if (!currentProblemUrl || !sessionStartTime) return;
+
+        const problems = getData();
+        const existingIndex = problems.findIndex(p => p.url === currentProblemUrl);
+
+        if (existingIndex !== -1) {
+            const sessionTime = Math.floor((Date.now() - sessionStartTime) / 1000);
+            problems[existingIndex].timeSpent = (problems[existingIndex].timeSpent || 0) + sessionTime;
+            saveData(problems);
+            sessionStartTime = Date.now(); // Reset for next interval
+        }
+    }
+
+    // Update live timer display
+    function updateLiveTimer() {
+        if (!liveTimerDisplay || !currentProblemUrl || !sessionStartTime) return;
+
+        const problems = getData();
+        const problem = problems.find(p => p.url === currentProblemUrl);
+
+        if (problem) {
+            const currentSessionTime = Math.floor((Date.now() - sessionStartTime) / 1000);
+            const totalTime = (problem.timeSpent || 0) + currentSessionTime;
+            const timeText = liveTimerDisplay.querySelector('.cf-timer-text');
+            if (timeText) {
+                timeText.textContent = formatTime(totalTime);
+            }
+        }
+    }
+
+    // Format time duration
+    function formatTime(seconds) {
+        if (seconds < 60) return `${seconds}s`;
+
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+
+        if (days > 0) {
+            const remainingHours = hours % 24;
+            return `${days}d ${remainingHours}h`;
+        }
+        if (hours > 0) {
+            const remainingMinutes = minutes % 60;
+            return `${hours}h ${remainingMinutes}m`;
+        }
+        const remainingSeconds = seconds % 60;
+        return `${minutes}m ${remainingSeconds}s`;
     }
 
     // Update problem tracking
     function trackProblem() {
-        if (!isProblemPage()) return;
+        if (!isProblemPage()) {
+            stopTimeTracking();
+            return;
+        }
 
         const currentProblem = extractProblemInfo();
         let problems = getData();
@@ -324,7 +491,7 @@
             // Add new problem
             problems.unshift(currentProblem);
 
-            // Keep only the latest 20 problems
+            // Keep only the latest problems
             if (problems.length > MAX_PROBLEMS) {
                 problems = problems.slice(0, MAX_PROBLEMS);
             }
@@ -332,6 +499,7 @@
 
         saveData(problems);
         updateBadge();
+        startTimeTracking();
     }
 
     // Format date
@@ -349,6 +517,17 @@
         if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
 
         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    // Create live timer display
+    function createLiveTimer() {
+        liveTimerDisplay = document.createElement('div');
+        liveTimerDisplay.className = 'cf-live-timer';
+        liveTimerDisplay.innerHTML = `
+            <span class="cf-live-timer-icon">⏱️</span>
+            <span class="cf-timer-text">0s</span>
+        `;
+        document.body.appendChild(liveTimerDisplay);
     }
 
     // Create tracker icon
@@ -440,14 +619,27 @@
             return;
         }
 
-        body.innerHTML = problems.map((problem, index) => `
-            <div class="cf-tracker-problem">
+        const currentUrl = window.location.href;
+
+        body.innerHTML = problems.map((problem, index) => {
+            const isActive = currentUrl === problem.url && isProblemPage();
+            const activeClass = isActive ? 'active-problem' : '';
+            const activeIndicator = isActive ? '<span class="cf-active-indicator"><span class="cf-live-timer-icon">⏱️</span> Active Now</span>' : '';
+
+            return `
+            <div class="cf-tracker-problem ${activeClass}">
                 <div class="cf-problem-title">
                     <span>${index + 1}.</span>
                     <a href="${problem.url}" target="_blank">${problem.title}</a>
+                    ${activeIndicator}
                     <span class="cf-access-count">${problem.accessCount}× opened</span>
                 </div>
                 <div class="cf-problem-stats">
+                    <div class="cf-stat-item">
+                        <span class="cf-stat-icon">⏱️</span>
+                        <span class="cf-stat-label">Time spent:</span>
+                        <span class="cf-stat-value time-highlight">${formatTime(problem.timeSpent || 0)}</span>
+                    </div>
                     <div class="cf-stat-item">
                         <span class="cf-stat-icon">🕐</span>
                         <span class="cf-stat-label">First opened:</span>
@@ -460,7 +652,8 @@
                     </div>
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
     }
 
     // Clear all data
@@ -475,8 +668,36 @@
     // Initialize
     function init() {
         createTrackerIcon();
+        createLiveTimer();
         createModal();
         trackProblem();
+
+        // Handle page visibility changes (tab switching, minimizing)
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopTimeTracking();
+            } else if (isProblemPage()) {
+                startTimeTracking();
+            }
+        });
+
+        // Handle page unload
+        window.addEventListener('beforeunload', () => {
+            stopTimeTracking();
+        });
+
+        // Handle navigation within single page (for SPA-like behavior)
+        let lastUrl = location.href;
+        new MutationObserver(() => {
+            const url = location.href;
+            if (url !== lastUrl) {
+                lastUrl = url;
+                stopTimeTracking();
+                setTimeout(() => {
+                    trackProblem();
+                }, 500);
+            }
+        }).observe(document.body, { subtree: true, childList: true });
     }
 
     // Run on page load
